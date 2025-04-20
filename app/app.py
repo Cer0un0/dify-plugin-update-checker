@@ -302,29 +302,175 @@ def send_to_discord_webhook(recent_updates, webhook_url):
         logger.error(f"Discord Webhook送信中にエラーが発生しました: {e}")
         return False
 
+def send_to_slack_webhook(recent_updates, webhook_url):
+    """
+    Slack Webhookに結果を送信する関数（attachmentsを使用して色付け）
+    recent_updates: 過去指定時間内に更新されたプラグイン情報のリスト
+    webhook_url: Slack WebhookのURL
+    """
+    # 更新がない場合は通知しない
+    if not recent_updates:
+        logger.info("最近更新されたプラグインはありません。Slack通知はスキップされます。")
+        return True
+    
+    try:
+        # 現在の日時を取得
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # 更新されたプラグイン名のリストを作成
+        plugin_names = [info['name'] for info in recent_updates]
+        plugin_count = len(recent_updates)
+        
+        # プラグイン名を含むメッセージを作成
+        if plugin_count == 1:
+            header_text = f"*Difyプラグイン更新情報*: *{plugin_names[0]}* が更新されました"
+        else:
+            plugins_text = "、".join([f"*{name}*" for name in plugin_names])
+            header_text = f"*Difyプラグイン更新情報*: {plugins_text} の{plugin_count}個のプラグインが更新されました"
+        
+        # attachmentsのリストを作成
+        attachments = []
+        color = "#5865F2"
+        # ヘッダー用のattachment
+        header_attachment = {
+            "color": color,
+            "pretext": "Difyプラグイン更新情報",
+            "text": header_text,
+            "footer": f"Dify Plugin Update Checker • {current_time}"
+        }
+        attachments.append(header_attachment)
+        
+        # 各プラグイン情報用のattachment
+        for info in recent_updates:
+            plugin_attachment = {
+                "color": color,
+                "title": f"{info['name']} ({info['plugin_id']})",
+                "title_link": info['url'],
+                "text": "🔄 *プラグインが更新されました！*",
+                "fields": [
+                    {
+                        "title": "最新バージョン",
+                        "value": info['latest_version'],
+                        "short": True
+                    },
+                    {
+                        "title": "更新日時",
+                        "value": info['version_updated_at'],
+                        "short": True
+                    },
+                    {
+                        "title": "インストール数",
+                        "value": str(info['install_count']),
+                        "short": True
+                    }
+                ]
+            }
+            attachments.append(plugin_attachment)
+        
+        # Slackのwebhookに送信するデータ
+        payload = {
+            "attachments": attachments
+        }
+        
+        # POSTリクエストを送信
+        response = requests.post(webhook_url, json=payload)
+        
+        if response.status_code == 200:
+            logger.info("Slack Webhookへの送信に成功しました")
+            return True
+        else:
+            logger.error(f"Slack Webhookへの送信に失敗しました: ステータスコード {response.status_code}")
+            logger.error(f"レスポンス: {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Slack Webhook送信中にエラーが発生しました: {e}")
+        return False
+
+def create_test_plugin_data():
+    """
+    テスト用のプラグインデータを作成する関数
+    """
+    current_time = datetime.now(timezone.utc).isoformat()
+    
+    return [{
+        "name": "テスト用プラグイン",
+        "plugin_id": "test/plugin",
+        "latest_version": "1.0.0",
+        "version_updated_at": convert_to_jst(current_time),
+        "version_updated_at_utc": current_time,
+        "install_count": 123,
+        "url": "https://marketplace.dify.ai/plugins/test/plugin"
+    }]
+
 def lambda_handler(event, context):
     """
     AWS Lambda関数のエントリーポイント
     """
     try:
-        # 環境変数からURLリストを読み込み、データを取得
-        _, version_summary = fetch_multiple_plugins()
+        # テストモードかどうかをチェック
+        test_slack = event.get('test_slack', False)
+        test_discord = event.get('test_discord', False)
         
-        # 過去1時間以内に更新されたプラグインのみをフィルタリング
-        recent_updates = filter_recent_updates(version_summary, hours=1)
-        
-        # 更新がない場合は明示的にログに出力
-        if not recent_updates:
-            logger.info("過去1時間以内に更新されたプラグインはありません。")
-        
-        # Discord Webhookに結果を送信（過去1時間以内の更新のみ）
-        # DISCORD_WEBHOOK_URLが設定されている場合のみ実行
-        webhook_url = os.environ.get('DISCORD_WEBHOOK_URL')
-        if webhook_url:
-            webhook_result = send_to_discord_webhook(recent_updates, webhook_url)
+        if test_slack or test_discord:
+            logger.info("テストモードが有効です。テスト用のデータを使用します。")
+            # テスト用のプラグインデータを作成
+            recent_updates = create_test_plugin_data()
+            version_summary = recent_updates
+            
+            # Slack Webhookテスト
+            if test_slack:
+                logger.info("Slackテストモードが有効です。")
+                slack_webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
+                if slack_webhook_url:
+                    slack_webhook_result = send_to_slack_webhook(recent_updates, slack_webhook_url)
+                    logger.info(f"Slackテスト結果: {slack_webhook_result}")
+                else:
+                    logger.error("SLACK_WEBHOOK_URLが設定されていません。Slackテストはスキップされます。")
+                    slack_webhook_result = False
+            else:
+                slack_webhook_result = False
+            
+            # Discord Webhookテスト
+            if test_discord:
+                logger.info("Discordテストモードが有効です。")
+                discord_webhook_url = os.environ.get('DISCORD_WEBHOOK_URL')
+                if discord_webhook_url:
+                    discord_webhook_result = send_to_discord_webhook(recent_updates, discord_webhook_url)
+                    logger.info(f"Discordテスト結果: {discord_webhook_result}")
+                else:
+                    logger.error("DISCORD_WEBHOOK_URLが設定されていません。Discordテストはスキップされます。")
+                    discord_webhook_result = False
+            else:
+                discord_webhook_result = False
         else:
-            logger.info("DISCORD_WEBHOOK_URLが設定されていません。Discord通知はスキップされます。")
-            webhook_result = False
+            # 通常の処理
+            # 環境変数からURLリストを読み込み、データを取得
+            _, version_summary = fetch_multiple_plugins()
+            
+            # 過去1時間以内に更新されたプラグインのみをフィルタリング
+            recent_updates = filter_recent_updates(version_summary, hours=1)
+            
+            # 更新がない場合は明示的にログに出力
+            if not recent_updates:
+                logger.info("過去1時間以内に更新されたプラグインはありません。")
+            
+            # Discord Webhookに結果を送信（過去1時間以内の更新のみ）
+            # DISCORD_WEBHOOK_URLが設定されている場合のみ実行
+            discord_webhook_url = os.environ.get('DISCORD_WEBHOOK_URL')
+            if discord_webhook_url:
+                discord_webhook_result = send_to_discord_webhook(recent_updates, discord_webhook_url)
+            else:
+                logger.info("DISCORD_WEBHOOK_URLが設定されていません。Discord通知はスキップされます。")
+                discord_webhook_result = False
+            
+            # Slack Webhookに結果を送信（過去1時間以内の更新のみ）
+            # SLACK_WEBHOOK_URLが設定されている場合のみ実行
+            slack_webhook_url = os.environ.get('SLACK_WEBHOOK_URL')
+            if slack_webhook_url:
+                slack_webhook_result = send_to_slack_webhook(recent_updates, slack_webhook_url)
+            else:
+                logger.info("SLACK_WEBHOOK_URLが設定されていません。Slack通知はスキップされます。")
+                slack_webhook_result = False
         
         # レスポンスを構築
         response = {
@@ -332,7 +478,10 @@ def lambda_handler(event, context):
             'body': json.dumps({
                 'message': 'プラグイン情報の取得に成功しました',
                 'plugin_data': version_summary,
-                'discord_webhook_sent': webhook_result
+                'discord_webhook_sent': discord_webhook_result,
+                'slack_webhook_sent': slack_webhook_result,
+                'test_slack': test_slack,
+                'test_discord': test_discord
             }, ensure_ascii=False)
         }
         

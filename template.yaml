@@ -20,8 +20,9 @@ Resources:
         - x86_64
       Environment:
         Variables:
-          PLUGINS: "langgenius/openai,langgenius/anthropic,langgenius/gemini,langgenius/azure_openai,langgenius/cohere,langgenius/bedrock,langgenius/ollama"
+          PLUGINS: "langgenius/openai,langgenius/anthropic,langgenius/gemini,langgenius/azure_openai,langgenius/cohere,langgenius/bedrock,langgenius/ollama,langgenius/firecrawl,langgenius/openrouter,langgenius/x"
           DISCORD_WEBHOOK_URL: ""
+          SLACK_WEBHOOK_URL: ""
       Events:
         ScheduledEvent:
           Type: Schedule
