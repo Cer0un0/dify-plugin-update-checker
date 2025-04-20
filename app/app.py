@@ -1,31 +1,58 @@
-import argparse
 import json
 import logging
 import os
-import sys
-from pathlib import Path
+from datetime import datetime, timedelta, timezone
 
-import requests  # curlの代わりにrequestsを使用
-from dotenv import load_dotenv
+import requests
 
-# ロガーの設定
-logger = logging.getLogger(__name__)
+logger = logging.getLogger()
 logger.setLevel(logging.INFO)
-handler = logging.StreamHandler()
-formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-handler.setFormatter(formatter)
-logger.addHandler(handler)
 
 
-def fetch_plugin_info(url):
+def convert_to_jst(utc_time_str):
     """
-    requestsライブラリを使用して指定されたURLからプラグイン情報を取得し、
+    UTC時間の文字列をJST（日本時間）に変換する関数
+    
+    Args:
+        utc_time_str (str): "2025-04-16T06:18:40.944703Z"のような形式のUTC時間文字列
+        
+    Returns:
+        str: "2025年04月16日 15:18:40"のような形式のJST時間文字列
+    """
+    try:
+        # マイクロ秒部分を含む場合と含まない場合の両方に対応
+        if '.' in utc_time_str:
+            if utc_time_str.endswith('Z'):
+                utc_time_str = utc_time_str[:-1]  # 末尾の'Z'を削除
+            dt = datetime.fromisoformat(utc_time_str)
+        else:
+            # マイクロ秒がない場合
+            if utc_time_str.endswith('Z'):
+                utc_time_str = utc_time_str[:-1]  # 末尾の'Z'を削除
+            dt = datetime.fromisoformat(utc_time_str)
+        
+        # UTCとして扱う
+        dt = dt.replace(tzinfo=timezone.utc)
+        
+        # JSTに変換（UTC+9）
+        jst = dt.astimezone(timezone(timedelta(hours=9)))
+        
+        # 日本語形式でフォーマット
+        return jst.strftime("%Y年%m月%d日 %H:%M:%S")
+    except Exception as e:
+        logger.error(f"日時変換エラー: {e}, 入力: {utc_time_str}")
+        return utc_time_str  # 変換に失敗した場合は元の文字列を返す
+
+
+def fetch_plugin_info(plugin_name):
+    """
+    requestsライブラリを使用して指定されたプラグイン名からプラグイン情報を取得し、
     オプションでファイルに保存する関数
     """
     try:
-        # URLからプラグインのパスを抽出
+        # プラグイン名からプラグインのパスを抽出
         # 例: https://marketplace.dify.ai/plugins/langgenius/openai → langgenius/openai
-        plugin_path = url.split('/plugins/')[1] if '/plugins/' in url else url
+        plugin_path = plugin_name.split('/plugins/')[1] if '/plugins/' in plugin_name else plugin_name
         
         # APIエンドポイントを構築
         api_url = f"https://marketplace.dify.ai/api/v1/plugins/{plugin_path}"
@@ -70,29 +97,22 @@ def fetch_plugin_info(url):
         logger.error(f"エラーが発生しました: {e}")
         return None
 
-def load_urls_from_env():
+def load_plugins_from_env():
     """
-    .envファイルからURLリストを読み込む関数
-    .envファイル内では PLUGIN_URLS=url1,url2,url3 の形式で指定
+    環境変数からプラグインリストを読み込む関数
+    環境変数では PLUGINS=plugin1,plugin2,plugin3 の形式で指定
     """
-    # .envファイルを読み込む
-    env_path = Path('.') / '.env'
-    if not env_path.exists():
-        raise FileNotFoundError(".envファイルが見つかりません。.envファイルを作成してください。")
+    # PLUGINS環境変数を取得
+    plugins = os.environ.get('PLUGINS')
+    if not plugins:
+        raise ValueError("PLUGINSが環境変数に設定されていません。")
     
-    load_dotenv()
-    
-    # PLUGIN_URLS環境変数を取得
-    plugin_urls = os.getenv('PLUGIN_URLS')
-    if not plugin_urls:
-        raise ValueError("PLUGIN_URLSが.envファイルに設定されていません。.envファイルにPLUGIN_URLSを設定してください。")
-    
-    # カンマ区切りのURLリストを分割
-    urls = [url.strip() for url in plugin_urls.split(',')]
-    logger.info(f".envファイルから{len(urls)}個のURLを読み込みました")
-    return urls
+    # カンマ区切りのプラグインリストを分割
+    plugin_names = [plugin.strip() for plugin in plugins.split(',')]
+    logger.info(f"環境変数から{len(plugin_names)}個のプラグインを読み込みました")
+    return plugin_names
 
-def extract_plugin_version_info(plugin_data):
+def extract_plugin_version_info(plugin_data, plugin_name):
     """
     プラグインデータから重要なバージョン情報を抽出する関数
     """
@@ -101,37 +121,46 @@ def extract_plugin_version_info(plugin_data):
     
     plugin = plugin_data["data"]["plugin"]
     
+    # プラグイン名から完全なURLに変換
+    plugin_url = f"https://marketplace.dify.ai/plugins/{plugin_name}"
+    
+    # 更新日時をUTCからJSTに変換
+    utc_time = plugin.get("version_updated_at", plugin.get("updated_at", "不明"))
+    jst_time = convert_to_jst(utc_time) if utc_time != "不明" else "不明"
+    
     return {
         "name": plugin.get("label", {}).get("en_US", plugin.get("name", "不明")),
         "plugin_id": plugin.get("plugin_id", "不明"),
         "latest_version": plugin.get("latest_version", "不明"),
-        "version_updated_at": plugin.get("version_updated_at", plugin.get("updated_at", "不明")),
-        "install_count": plugin.get("install_count", 0)
+        "version_updated_at": jst_time,
+        "version_updated_at_utc": utc_time,  # 元のUTC時間も保持
+        "install_count": plugin.get("install_count", 0),
+        "url": plugin_url
     }
 
 def fetch_multiple_plugins():
     """
-    複数のプラグインURLから情報を取得し、バージョン情報の要約を出力する関数
+    複数のプラグインから情報を取得し、バージョン情報の要約を出力する関数
     """
-    # .envファイルからURLリストを読み込む
-    urls = load_urls_from_env()
+    # 環境変数からプラグインリストを読み込む
+    plugin_names = load_plugins_from_env()
     
-    logger.info(f"処理するURL数: {len(urls)}")
+    logger.info(f"処理するプラグイン数: {len(plugin_names)}")
     results = []
     version_summary = []
     
-    for url in urls:
-        logger.info(f"処理中のURL: {url}")
-        plugin_data = fetch_plugin_info(url)
+    for plugin_name in plugin_names:
+        logger.info(f"処理中のプラグイン: {plugin_name}")
+        plugin_data = fetch_plugin_info(plugin_name)
         if plugin_data:
             # プラグイン情報を結果リストに追加
             results.append({
-                "url": url,
+                "plugin_name": plugin_name,
                 "data": plugin_data
             })
             
             # バージョン情報を抽出して要約リストに追加
-            version_info = extract_plugin_version_info(plugin_data)
+            version_info = extract_plugin_version_info(plugin_data, plugin_name)
             if version_info:
                 version_summary.append(version_info)
     
@@ -145,22 +174,174 @@ def fetch_multiple_plugins():
             logger.info(f"  インストール数: {info['install_count']}")
             logger.info("---")
     
-    # バージョン情報の要約をJSONファイルに保存
-    if version_summary:
-        summary_file = "output_summary.json"
-        with open(summary_file, 'w', encoding='utf-8') as f:
-            json.dump(version_summary, indent=2, ensure_ascii=False, fp=f)
-        logger.info(f"バージョン情報の要約を {summary_file} に保存しました")
-    
     return results, version_summary
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Dify.aiのプラグイン情報を取得するスクリプト')
-    args = parser.parse_args()
+def filter_recent_updates(version_summary, hours=1):
+    """
+    過去指定時間内に更新されたプラグインのみをフィルタリングする関数
+    
+    Args:
+        version_summary: プラグイン情報のリスト
+        hours: 何時間前までの更新を対象とするか（デフォルト: 1時間）
+        
+    Returns:
+        list: 指定時間内に更新されたプラグイン情報のリスト
+    """
+    # 現在時刻（UTC）
+    now = datetime.now(timezone.utc)
+    # 指定時間前
+    time_threshold = now - timedelta(hours=hours)
+    logger.info(f"現在時刻(UTC): {now}, 過去{hours}時間の閾値: {time_threshold}")
+    
+    recent_updates = []
+    
+    for info in version_summary:
+        # UTC時間文字列をdatetimeオブジェクトに変換
+        updated_at_str = info.get('version_updated_at_utc')
+        if updated_at_str and updated_at_str != "不明":
+            try:
+                # マイクロ秒部分を含む場合と含まない場合の両方に対応
+                if '.' in updated_at_str:
+                    if updated_at_str.endswith('Z'):
+                        updated_at_str = updated_at_str[:-1]  # 末尾の'Z'を削除
+                    updated_at = datetime.fromisoformat(updated_at_str)
+                else:
+                    # マイクロ秒がない場合
+                    if updated_at_str.endswith('Z'):
+                        updated_at_str = updated_at_str[:-1]  # 末尾の'Z'を削除
+                    updated_at = datetime.fromisoformat(updated_at_str)
+                
+                # UTCとして扱う
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+                
+                # 指定時間内に更新されたかチェック
+                if updated_at >= time_threshold:
+                    recent_updates.append(info)
+                    logger.info(f"最近更新されたプラグイン: {info['name']} - {info['version_updated_at']}")
+            except Exception as e:
+                logger.error(f"日時変換エラー: {e}, 入力: {updated_at_str}")
+    
+    return recent_updates
+
+def send_to_discord_webhook(recent_updates, webhook_url):
+    """
+    Discord Webhookに結果を送信する関数（Embedを使用）
+    recent_updates: 過去指定時間内に更新されたプラグイン情報のリスト
+    webhook_url: Discord WebhookのURL
+    """
+    # 更新がない場合は通知しない
+    if not recent_updates:
+        logger.info("最近更新されたプラグインはありません。Discord通知はスキップされます。")
+        return True
     
     try:
-        # .envファイルからURLリストを読み込み、データを取得
-        _, _ = fetch_multiple_plugins()
-    except (FileNotFoundError, ValueError) as e:
+        # 現在の日時を取得
+        current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Embedのリストを作成
+        embeds = []
+        
+        for info in recent_updates:
+            # 各プラグイン情報用のEmbedを作成
+            embed = {
+                "title": f"{info['name']} ({info['plugin_id']})",
+                "url": info['url'],  # プラグインのURLをタイトルにリンクとして設定
+                "description": "🔄 **プラグインが更新されました！**",  # 更新された旨を明示的に表示
+                "color": 0x5865F2,  # Discordブルー
+                "fields": [
+                    {
+                        "name": "最新バージョン",
+                        "value": f"**{info['latest_version']}**",
+                        "inline": True
+                    },
+                    {
+                        "name": "更新日時",
+                        "value": info['version_updated_at'],
+                        "inline": True
+                    },
+                    {
+                        "name": "インストール数",
+                        "value": str(info['install_count']),
+                        "inline": True
+                    }
+                ],
+                "footer": {
+                    "text": f"Dify Plugin Update Checker • {current_time}"
+                }
+            }
+            embeds.append(embed)
+        
+        # 更新されたプラグイン名のリストを作成
+        plugin_names = [info['name'] for info in recent_updates]
+        plugin_count = len(recent_updates)
+        
+        # プラグイン名を含むメッセージを作成
+        if plugin_count == 1:
+            message = f"# Difyプラグイン更新情報: **{plugin_names[0]}** が更新されました"
+        else:
+            plugins_text = "、".join([f"**{name}**" for name in plugin_names])
+            message = f"# Difyプラグイン更新情報: {plugins_text} の{plugin_count}個のプラグインが更新されました"
+        
+        # Discordのwebhookに送信するデータ
+        payload = {
+            "content": message,
+            "embeds": embeds
+        }
+        
+        # POSTリクエストを送信
+        response = requests.post(webhook_url, json=payload)
+        
+        if response.status_code == 204:
+            logger.info("Discord Webhookへの送信に成功しました")
+            return True
+        else:
+            logger.error(f"Discord Webhookへの送信に失敗しました: ステータスコード {response.status_code}")
+            logger.error(f"レスポンス: {response.text}")
+            return False
+    except Exception as e:
+        logger.error(f"Discord Webhook送信中にエラーが発生しました: {e}")
+        return False
+
+def lambda_handler(event, context):
+    """
+    AWS Lambda関数のエントリーポイント
+    """
+    try:
+        # 環境変数からURLリストを読み込み、データを取得
+        _, version_summary = fetch_multiple_plugins()
+        
+        # 過去1時間以内に更新されたプラグインのみをフィルタリング
+        recent_updates = filter_recent_updates(version_summary, hours=1)
+        
+        # 更新がない場合は明示的にログに出力
+        if not recent_updates:
+            logger.info("過去1時間以内に更新されたプラグインはありません。")
+        
+        # Discord Webhookに結果を送信（過去1時間以内の更新のみ）
+        # DISCORD_WEBHOOK_URLが設定されている場合のみ実行
+        webhook_url = os.environ.get('DISCORD_WEBHOOK_URL')
+        if webhook_url:
+            webhook_result = send_to_discord_webhook(recent_updates, webhook_url)
+        else:
+            logger.info("DISCORD_WEBHOOK_URLが設定されていません。Discord通知はスキップされます。")
+            webhook_result = False
+        
+        # レスポンスを構築
+        response = {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': 'プラグイン情報の取得に成功しました',
+                'plugin_data': version_summary,
+                'discord_webhook_sent': webhook_result
+            }, ensure_ascii=False)
+        }
+        
+        return response
+    except Exception as e:
         logger.error(f"エラー: {e}")
-        sys.exit(1)
+        return {
+            'statusCode': 500,
+            'body': json.dumps({
+                'message': f'エラーが発生しました: {str(e)}'
+            }, ensure_ascii=False)
+        }
