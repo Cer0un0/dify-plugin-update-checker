@@ -1,16 +1,16 @@
 # Dify Plugin Update Checker
 
-Dify Marketplaceのプラグイン更新を自動的に監視し、更新があった場合にDiscord通知を送信するAWS Lambda関数です。
+Dify Marketplaceのプラグイン更新を自動的に監視し、更新があった場合にDiscordとSlackに通知を送信するAWS Lambda関数です。
 
 ## 概要
 
-このプロジェクトは、[Dify](https://dify.ai)のMarketplaceで公開されているプラグインの更新を定期的にチェックし、新しいバージョンがリリースされた場合にDiscord Webhookを通じて通知します。AWS SAM（Serverless Application Model）を使用して、AWS Lambda上にデプロイされるサーバーレスアプリケーションとして実装されています。
+このプロジェクトは、[Dify](https://dify.ai)のMarketplaceで公開されているプラグインの更新を定期的にチェックし、新しいバージョンがリリースされた場合にDiscordとSlack Webhookを通じて通知します。AWS SAM（Serverless Application Model）を使用して、AWS Lambda上にデプロイされるサーバーレスアプリケーションとして実装されています。
 
 ## 主な機能
 
 - 指定したDifyプラグインの最新バージョン情報を自動取得
 - 過去1時間以内に更新されたプラグインを検出
-- 更新があった場合、Discord Webhookを通じて通知
+- 更新があった場合、DiscordとSlack Webhookを通じて通知
 - 1時間ごとに自動実行（CloudWatch Eventsによるスケジュール実行）
 
 ## 設定方法
@@ -24,6 +24,8 @@ Lambda関数は以下の環境変数を使用します：
   - フォーマット: `{組織名}/{プラグイン名}`
 - `DISCORD_WEBHOOK_URL`: 通知先のDiscord WebhookのURL
   - 空の場合、Discord通知は送信されません
+- `SLACK_WEBHOOK_URL`: 通知先のSlack WebhookのURL
+  - 空の場合、Slack通知は送信されません
 
 これらの環境変数は`template.yaml`ファイル内で設定できます。
 
@@ -52,6 +54,7 @@ Environment:
   Variables:
     PLUGINS: "langgenius/openai,langgenius/anthropic,langgenius/gemini,langgenius/azure_openai,langgenius/cohere,langgenius/bedrock,langgenius/ollama"
     DISCORD_WEBHOOK_URL: "あなたのDiscord WebhookのURL"
+    SLACK_WEBHOOK_URL: "あなたのSlack WebhookのURL"
 ```
 
 3. SAMを使用してビルドとデプロイを実行
@@ -81,15 +84,45 @@ sam build --use-container
 sam local invoke DifyPluginCheckerFunction
 ```
 
+## テスト方法
+
+Lambda関数のテストイベントを設定することで、実際のプラグイン更新を待たずに通知機能をテストできます：
+
+```json
+// Slackのみをテストする場合
+{
+  "test_slack": true
+}
+
+// Discordのみをテストする場合
+{
+  "test_discord": true
+}
+
+// 両方をテストする場合
+{
+  "test_slack": true,
+  "test_discord": true
+}
+```
+
 ## 更新通知の例
 
-更新が検出された場合、以下のような通知がDiscordに送信されます：
+更新が検出された場合、以下のような通知がDiscordとSlackに送信されます：
 
 - プラグイン名とID
 - 最新バージョン
 - 更新日時（日本時間）
 - インストール数
 - Dify Marketplaceへのリンク
+
+### Discord通知
+
+Discordでは、Embedを使用したリッチな通知が送信されます。Discordブルー（#5865F2）のカラーで表示されます。
+
+### Slack通知
+
+Slackでは、attachmentsを使用したカラー付きの通知が送信されます。Discord通知と同じカラー（#5865F2）で統一されています。
 
 ## ログの確認
 
