@@ -46,8 +46,20 @@ def convert_to_jst(utc_time_str):
 
 def fetch_plugin_info(plugin_name):
     """
-    requestsライブラリを使用して指定されたプラグイン名からプラグイン情報を取得し、
-    オプションでファイルに保存する関数
+    指定されたプラグイン名からDify Marketplaceのプラグイン情報を取得する関数
+    
+    プラグイン名からAPIエンドポイントを構築し、HTTPリクエストを送信して
+    プラグインの詳細情報（バージョン、更新日時など）を取得します。
+    
+    Args:
+        plugin_name (str): プラグイン名またはURL
+                          例: "langgenius/openai" または "https://marketplace.dify.ai/plugins/langgenius/openai"
+    
+    Returns:
+        dict or None: 成功した場合はプラグイン情報を含むJSON応答データ、失敗した場合はNone
+    
+    Raises:
+        Exception: HTTPリクエスト中にエラーが発生した場合
     """
     try:
         # プラグイン名からプラグインのパスを抽出
@@ -100,7 +112,15 @@ def fetch_plugin_info(plugin_name):
 def load_plugins_from_env():
     """
     環境変数からプラグインリストを読み込む関数
-    環境変数では PLUGINS=plugin1,plugin2,plugin3 の形式で指定
+    
+    環境変数「PLUGINS」からカンマ区切りのプラグインリスト（plugin1,plugin2,plugin3 の形式）を
+    読み込み、リストとして返します。
+    
+    Returns:
+        list: プラグイン名のリスト
+    
+    Raises:
+        ValueError: PLUGINS環境変数が設定されていない場合
     """
     # PLUGINS環境変数を取得
     plugins = os.environ.get('PLUGINS')
@@ -115,6 +135,16 @@ def load_plugins_from_env():
 def extract_plugin_version_info(plugin_data, plugin_name):
     """
     プラグインデータから重要なバージョン情報を抽出する関数
+    
+    APIから取得したプラグインデータから、名前、ID、最新バージョン、更新日時などの
+    重要な情報を抽出し、整形された辞書として返します。日時情報はJST（日本時間）に変換されます。
+    
+    Args:
+        plugin_data (dict): APIから取得したプラグイン情報を含む辞書
+        plugin_name (str): プラグイン名（URL生成に使用）
+    
+    Returns:
+        dict or None: 抽出されたプラグイン情報を含む辞書、データが無効な場合はNone
     """
     if not plugin_data or "data" not in plugin_data or "plugin" not in plugin_data["data"]:
         return None
@@ -141,6 +171,14 @@ def extract_plugin_version_info(plugin_data, plugin_name):
 def fetch_multiple_plugins():
     """
     複数のプラグインから情報を取得し、バージョン情報の要約を出力する関数
+    
+    環境変数から読み込んだプラグインリストに対して、各プラグインの情報を取得し、
+    バージョン情報の要約をログに出力します。
+    
+    Returns:
+        tuple: (results, version_summary)
+            - results (list): 各プラグインの生データを含むリスト
+            - version_summary (list): 各プラグインのバージョン情報要約を含むリスト
     """
     # 環境変数からプラグインリストを読み込む
     plugin_names = load_plugins_from_env()
@@ -180,12 +218,20 @@ def filter_recent_updates(version_summary, hours=1):
     """
     過去指定時間内に更新されたプラグインのみをフィルタリングする関数
     
+    現在時刻（UTC）から指定された時間（デフォルト: 1時間）以内に更新された
+    プラグインのみを抽出します。更新日時の比較はUTC時間で行われます。
+    日時文字列の解析は、マイクロ秒部分の有無や'Z'サフィックスの有無に対応しています。
+    
     Args:
-        version_summary: プラグイン情報のリスト
-        hours: 何時間前までの更新を対象とするか（デフォルト: 1時間）
+        version_summary (list): プラグイン情報のリスト。各要素は辞書で、
+                               'version_updated_at_utc'キーに更新日時（UTC）を含む必要があります
+        hours (int): 何時間前までの更新を対象とするか（デフォルト: 1時間）
         
     Returns:
         list: 指定時間内に更新されたプラグイン情報のリスト
+    
+    Note:
+        日時変換に失敗した場合はエラーログが出力され、そのプラグインは結果に含まれません
     """
     # 現在時刻（UTC）
     now = datetime.now(timezone.utc)
@@ -225,9 +271,18 @@ def filter_recent_updates(version_summary, hours=1):
 
 def send_to_discord_webhook(recent_updates, webhook_url):
     """
-    Discord Webhookに結果を送信する関数（Embedを使用）
-    recent_updates: 過去指定時間内に更新されたプラグイン情報のリスト
-    webhook_url: Discord WebhookのURL
+    Discord Webhookに更新情報を送信する関数
+    
+    更新されたプラグイン情報をDiscord Webhookを使用して通知します。
+    各プラグインの情報はEmbedを使用して視覚的に整形されます。
+    更新がない場合は通知を送信しません。
+    
+    Args:
+        recent_updates (list): 過去指定時間内に更新されたプラグイン情報のリスト
+        webhook_url (str): Discord WebhookのURL
+    
+    Returns:
+        bool: 送信に成功した場合はTrue、失敗した場合はFalse
     """
     # 更新がない場合は通知しない
     if not recent_updates:
@@ -304,9 +359,18 @@ def send_to_discord_webhook(recent_updates, webhook_url):
 
 def send_to_slack_webhook(recent_updates, webhook_url):
     """
-    Slack Webhookに結果を送信する関数（attachmentsを使用して色付け）
-    recent_updates: 過去指定時間内に更新されたプラグイン情報のリスト
-    webhook_url: Slack WebhookのURL
+    Slack Webhookに更新情報を送信する関数
+    
+    更新されたプラグイン情報をSlack Webhookを使用して通知します。
+    各プラグインの情報はattachmentsを使用して視覚的に整形され、色付けされます。
+    更新がない場合は通知を送信しません。
+    
+    Args:
+        recent_updates (list): 過去指定時間内に更新されたプラグイン情報のリスト
+        webhook_url (str): Slack WebhookのURL
+    
+    Returns:
+        bool: 送信に成功した場合はTrue、失敗した場合はFalse
     """
     # 更新がない場合は通知しない
     if not recent_updates:
@@ -389,6 +453,12 @@ def send_to_slack_webhook(recent_updates, webhook_url):
 def create_test_plugin_data():
     """
     テスト用のプラグインデータを作成する関数
+    
+    テストモード用のダミープラグインデータを生成します。
+    現在時刻をUTCで取得し、それをJST（日本時間）に変換して使用します。
+    
+    Returns:
+        list: テスト用のプラグイン情報を含むリスト（1つのダミープラグイン）
     """
     current_time = datetime.now(timezone.utc).isoformat()
     
@@ -405,6 +475,26 @@ def create_test_plugin_data():
 def lambda_handler(event, context):
     """
     AWS Lambda関数のエントリーポイント
+    
+    この関数はAWS Lambdaによって呼び出されるメイン関数です。
+    イベントパラメータに基づいて、テストモードまたは通常モードで実行されます。
+    
+    テストモード（test_slack=True または test_discord=True）では、ダミーデータを使用して
+    Slack/Discordへの通知をテストします。
+    
+    通常モードでは、環境変数から読み込んだプラグインリストの情報を取得し、
+    過去1時間以内に更新されたプラグインがあれば通知を送信します。
+    
+    Args:
+        event (dict): Lambda関数に渡されるイベントデータ
+            - test_slack (bool): Slackテストモードを有効にするフラグ
+            - test_discord (bool): Discordテストモードを有効にするフラグ
+        context (LambdaContext): Lambda実行コンテキスト
+    
+    Returns:
+        dict: API Gateway互換のレスポンス
+            - statusCode (int): HTTPステータスコード
+            - body (str): レスポンスボディ（JSON文字列）
     """
     try:
         # テストモードかどうかをチェック
