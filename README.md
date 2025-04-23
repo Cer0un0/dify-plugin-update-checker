@@ -43,7 +43,7 @@ Lambda関数は以下の環境変数を使用します：
 1. リポジトリをクローン
 
 ```bash
-git clone https://github.com/yourusername/dify-plugin-update-checker.git
+git clone https://github.com/Cer0un0/dify-plugin-update-checker.git
 cd dify-plugin-update-checker
 ```
 
@@ -53,15 +53,15 @@ cd dify-plugin-update-checker
 Environment:
   Variables:
     PLUGINS: "langgenius/openai,langgenius/anthropic,langgenius/gemini,langgenius/azure_openai,langgenius/cohere,langgenius/bedrock,langgenius/ollama"
-    DISCORD_WEBHOOK_URL: "あなたのDiscord WebhookのURL"
-    SLACK_WEBHOOK_URL: "あなたのSlack WebhookのURL"
+    DISCORD_WEBHOOK_URL: "Discord WebhookのURL"
+    SLACK_WEBHOOK_URL: "Slack WebhookのURL"
 ```
 
 3. SAMを使用してビルドとデプロイを実行
 
 ```bash
-sam build --use-container
-sam deploy --guided
+sam build
+sam deploy
 ```
 
 デプロイ時に以下の情報を入力します：
@@ -72,19 +72,7 @@ sam deploy --guided
 - **Allow SAM CLI IAM role creation**: IAMロールの作成を許可するか（`Y`）
 - **Save arguments to samconfig.toml**: 設定を保存するか（`Y`）
 
-## ローカルでのテスト
-
-SAM CLIを使用してローカルでLambda関数をテストできます：
-
-```bash
-# ビルド
-sam build --use-container
-
-# ローカル実行
-sam local invoke DifyPluginCheckerFunction
-```
-
-## テスト方法
+## Webhookのテスト方法
 
 Lambda関数のテストイベントを設定することで、実際のプラグイン更新を待たずに通知機能をテストできます：
 
@@ -118,19 +106,11 @@ Lambda関数のテストイベントを設定することで、実際のプラ�
 
 ### Discord通知
 
-Discordでは、Embedを使用したリッチな通知が送信されます。Discordブルー（#5865F2）のカラーで表示されます。
+Discordでは、Embedを使用したリッチな通知が送信されます。
 
 ### Slack通知
 
-Slackでは、attachmentsを使用したカラー付きの通知が送信されます。Discord通知と同じカラー（#5865F2）で統一されています。
-
-## ログの確認
-
-CloudWatch Logsでログを確認できます：
-
-```bash
-sam logs -n DifyPluginCheckerFunction --stack-name "dify-plugin-update-checker" --tail
-```
+Slackでは、attachmentsを使用したカラー付きの通知が送信されます。
 
 ## リソースの削除
 
@@ -139,7 +119,3 @@ sam logs -n DifyPluginCheckerFunction --stack-name "dify-plugin-update-checker" 
 ```bash
 sam delete --stack-name "dify-plugin-update-checker"
 ```
-
-## ライセンス
-
-このプロジェクトはMITライセンスの下で公開されています。
